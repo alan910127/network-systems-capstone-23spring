@@ -31,6 +31,7 @@ int main(int argc, char* const argv[]) {
     std::exit(EXIT_FAILURE);
   }
 
+#ifdef PRINT_DEVICES
   auto devices_result = nscap::InternetDevices::init();
   if (devices_result.is_err()) {
     std::cerr << "pcap_findalldevs: " << devices_result.err() << std::endl;
@@ -42,6 +43,7 @@ int main(int argc, char* const argv[]) {
   for (auto device : devices) {
     std::cout << "Name: " << device->name << std::endl;
   }
+#endif
 
   auto capture_result = nscap::DeviceCapture::open(interface_name);
   if (capture_result.is_err()) {

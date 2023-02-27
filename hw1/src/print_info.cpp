@@ -17,6 +17,7 @@ std::string ip_to_string(u32 address) {
 
 void print_ip_info(const std::string& transport_type, u32 source_ip,
                    u32 dest_ip) {
+  std::cout << std::endl;
   std::cout << "Transport type: " << transport_type << std::endl;
   std::cout << "Source IP: " << ip_to_string(source_ip) << std::endl;
   std::cout << "Destination IP: " << ip_to_string(dest_ip) << std::endl;
