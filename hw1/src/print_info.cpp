@@ -33,8 +33,8 @@ void print_icmp_info(const iphdr* ip_header, const u8* ip_data) {
 
 void print_transport_info(u16 source_port, u16 dest_port, const u8* payload,
                           int length) {
-  std::cout << "Source port: " << source_port << std::endl;
-  std::cout << "Destination port: " << dest_port << std::endl;
+  std::cout << "Source port: " << ntohs(source_port) << std::endl;
+  std::cout << "Destination port: " << ntohs(dest_port) << std::endl;
   std::cout << "Payload:";
   for (int i = 0; i < std::min(length, 16); ++i) {
     std::cout << ' ' << std::hex << std::setw(2) << std::setfill('0')
