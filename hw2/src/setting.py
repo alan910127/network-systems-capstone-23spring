@@ -1,9 +1,18 @@
+USE_EXAMPLE_TOPOLOGY = True
+
+
 def get_hosts():
+    if USE_EXAMPLE_TOPOLOGY:
+        return "h1 h2 h3 h4"
+
     command = "h1 h2 h3 h4 h5 h6 h7 h8"
     return command
 
 
 def get_switches():
+    if USE_EXAMPLE_TOPOLOGY:
+        return "s1 s2 s3"
+
     command = "s1 s2 s3 s4 s5 s6 s7"
     return command
 
@@ -37,6 +46,9 @@ def get_mac():
 
 
 def get_links():
+    if USE_EXAMPLE_TOPOLOGY:
+        return "h1,s1 h2,s1 h3,s3 h4,s3 s1,s2 s2,s3"
+
     command = (
         "h1,s1 h2,s1 h3,s3 h4,s3 s1,s2 "
         "s2,s3 h5,s4 h6,s4 h7,s6 h8,s6 "
