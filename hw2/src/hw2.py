@@ -89,32 +89,26 @@ class Host:
             return
 
         if packet.type == PacketType.ARP:
-            # update the ARP table
-            self.update_arp(packet.source_ip, packet.source_mac)
-
             if (
                 packet.destination_mac != BROADCAST_MAC
                 or packet.destination_ip != self.ip
             ):
                 return
 
+            # update the ARP table
+            self.update_arp(packet.source_ip, packet.source_mac)
+
             # send ARP reply to the source
-            arp_packet = Packet(
+            arp_packet = self.prepare_packet(
                 type=PacketType.ARP,
-                source_name=self.name,
-                source_ip=self.ip,
-                source_mac=self.mac,
                 destination_ip=packet.source_ip,
                 destination_mac=packet.source_mac,
             )
             return self.send(arp_packet)
 
         # this is an ICMP request, send an ICMP reply to the source
-        icmp_packet = Packet(
+        icmp_packet = self.prepare_packet(
             type=PacketType.ICMP_REPLY,
-            source_name=self.name,
-            source_ip=self.ip,
-            source_mac=self.mac,
             destination_ip=packet.source_ip,
             destination_mac=packet.source_mac,
         )
@@ -125,11 +119,8 @@ class Host:
 
         if dest_ip not in self.arp_table:
             # send an ARP request
-            arp_packet = Packet(
+            arp_packet = self.prepare_packet(
                 type=PacketType.ARP,
-                source_name=self.name,
-                source_ip=self.ip,
-                source_mac=self.mac,
                 destination_ip=dest_ip,
                 destination_mac=BROADCAST_MAC,
             )
@@ -138,11 +129,8 @@ class Host:
         dest_mac = self.arp_table[dest_ip]
 
         # send an ICMP request to the destination
-        icmp_packet = Packet(
+        icmp_packet = self.prepare_packet(
             type=PacketType.ICMP_REQUEST,
-            source_name=self.name,
-            source_ip=self.ip,
-            source_mac=self.mac,
             destination_ip=dest_ip,
             destination_mac=dest_mac,
         )
@@ -150,14 +138,26 @@ class Host:
 
     def send(self, packet: Packet):
         if self.port_to is None:
-            logging.error(f"Host {self.name} has no port to send packets")
+            logger.error(f"Host {self.name} has no port to send packets")
             return
 
-        logging.debug(
+        logger.debug(
             f"{self.name} sends an {packet.type.name} packet to {packet.destination_ip}"
         )
 
         self.port_to.handle_packet(packet)
+
+    def prepare_packet(
+        self, type: PacketType, destination_ip: IpAddress, destination_mac: MacAddress
+    ):
+        return Packet(
+            type=type,
+            source_name=self.name,
+            source_ip=self.ip,
+            source_mac=self.mac,
+            destination_ip=destination_ip,
+            destination_mac=destination_mac,
+        )
 
 
 @dataclass
@@ -254,16 +254,12 @@ class Net:
         }
 
         for (name1, name2) in links:
-            node1 = (
-                self.host_dict[name1]
-                if name1 in self.host_dict
-                else self.switch_dict[name1]
-            )
-            node2 = (
-                self.host_dict[name2]
-                if name2 in self.host_dict
-                else self.switch_dict[name2]
-            )
+            node1 = self.try_get_node(name1)
+            node2 = self.try_get_node(name2)
+
+            if node1 is None or node2 is None:
+                logger.error(f"Could not find {name1} or {name2}")
+                continue
 
             create_link(node1, node2)
 
@@ -276,7 +272,7 @@ class Net:
         mac_table = setting.get_mac()
 
         links = [tuple(link.split(",")) for link in link_command]
-        logging.debug(links)
+        logger.debug(links)
 
         return cls(
             hosts=hostlist,
@@ -286,10 +282,10 @@ class Net:
             mac_table=mac_table,
         )
 
-    def _get_node(self, name: str):
+    def try_get_node(self, name: str):
         return self.host_dict.get(name) or self.switch_dict.get(name)
 
-    def _handle_command(self, command: str):
+    def handle_command(self, command: str):
         match command.split():
             case [name1, "ping", name2]:
                 self.ping(name1, name2)
@@ -308,7 +304,7 @@ class Net:
 
         while True:
             command = input(">> ")
-            self._handle_command(command)
+            self.handle_command(command)
 
     def ping(self, node1: str, node2: str):
         """Initiate a ping between two hosts"""
@@ -317,7 +313,7 @@ class Net:
         host2 = self.host_dict.get(node2)
 
         if host1 is None or host2 is None:
-            logging.error(f"Invalid hosts: {node1}, {node2}")
+            logger.error(f"Invalid hosts: {node1}, {node2}")
             return
 
         host1.ping(host2.ip)
@@ -335,18 +331,19 @@ class Net:
                     switch.show_table()
 
             case name:
-                if (node := self._get_node(name)) is not None:
+                if (node := self.try_get_node(name)) is not None:
                     node.show_table()
 
     def clear(self, target: str):
         """Clear the ARP or MAC table of a node"""
 
-        if (node := self._get_node(target)) is not None:
+        if (node := self.try_get_node(target)) is not None:
             node.clear()
 
 
 def main():
     logging.basicConfig(level=logging.DEBUG)
+
     net = Net.from_setting()
     net.run()
 
