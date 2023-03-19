@@ -60,10 +60,11 @@ class Host:
     def add(self, node: NetworkDevice):
         self.port_to = node
 
-    def show_table(self):
+    def show_table(self, show_header: bool = True):
         """Display ARP table entries for this host"""
 
-        print("ip : mac")
+        if show_header:
+            print("ip : mac")
         print(f"---------------{self.name}:")
 
         for host_ip, host_mac in self.arp_table.items():
@@ -89,14 +90,14 @@ class Host:
             return
 
         if packet.type == PacketType.ARP:
-            if (
-                packet.destination_mac != BROADCAST_MAC
-                or packet.destination_ip != self.ip
-            ):
+            if packet.destination_ip != self.ip:
                 return
 
             # update the ARP table
             self.update_arp(packet.source_ip, packet.source_mac)
+
+            if packet.destination_mac != BROADCAST_MAC:
+                return
 
             # send ARP reply to the source
             arp_packet = self.prepare_packet(
@@ -169,10 +170,11 @@ class Switch:
     def add(self, node: NetworkDevice):
         self.port_to.append(node)
 
-    def show_table(self):
+    def show_table(self, show_header: bool = True):
         """Display MAC table entries for this switch"""
 
-        print("mac : port")
+        if show_header:
+            print("mac : port")
         print(f"---------------{self.name}:")
 
         for mac, port in self.mac_table.items():
@@ -205,7 +207,7 @@ class Switch:
 
         self.update_mac(packet.source_mac, source_port)
 
-        if packet.type == PacketType.ARP:
+        if packet.type == PacketType.ARP and packet.destination_mac == BROADCAST_MAC:
             # broadcast the packet
             return self.send_to_ports(packet, exclude=source_port)
 
@@ -323,12 +325,12 @@ class Net:
 
         match target:
             case "all_hosts":
-                for host in self.host_dict.values():
-                    host.show_table()
+                for i, host in enumerate(self.host_dict.values()):
+                    host.show_table(show_header=i == 0)
 
             case "all_switches":
-                for switch in self.switch_dict.values():
-                    switch.show_table()
+                for i, switch in enumerate(self.switch_dict.values()):
+                    switch.show_table(show_header=i == 0)
 
             case name:
                 if (node := self.try_get_node(name)) is not None:
