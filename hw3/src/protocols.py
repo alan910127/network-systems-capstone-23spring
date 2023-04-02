@@ -1,8 +1,12 @@
+from __future__ import annotations
+
 import functools
+import itertools
+import random
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable, Protocol, Sequence
+from typing import Callable
 
 from setting import Setting
 
@@ -22,138 +26,163 @@ SUCCESS_PATTERN = re.compile(r"<-*>")
 COLLISION_PATTERN = re.compile(r"<-*\|")
 
 
-def print_history(
-    packets: list[list[int]], history: list[list[TransmissionStatus]]
-) -> None:
-    """Print the history of the simulation."""
+@dataclass
+class Host:
+    packets: list[int]
+    """Timepoints when the host generates a packet."""
 
-    for packet_times, host in zip(packets, history):
-        # TODO: print the packet times in the specified format
-        print(packet_times)
-        print("".join(map(str, host)))
+    sending_progress: int = 0
+    """The progress of sending a packet."""
 
+    def is_sending(self) -> bool:
+        return self.sending_progress > 0
 
-def create_summary(
-    total_time: int, history: list[list[TransmissionStatus]]
-) -> tuple[float, float, float]:
-    """Create a summary of the simulation."""
+    def has_packet(self, time: int) -> bool:
+        return len(self.packets) > 0 and self.packets[0] <= time
 
-    def count_status(host: list[TransmissionStatus], pattern: re.Pattern[str]) -> int:
-        string_history = "".join(map(str, host))
-        matched = pattern.findall(string_history)
-        return sum(len(m) for m in matched)
+    def get_action(self, time: int, can_start: bool = True) -> TransmissionStatus:
+        if self.is_sending():
+            return TransmissionStatus.Sending
 
-    success_count = sum(count_status(host, SUCCESS_PATTERN) for host in history)
-    collision_count = sum(count_status(host, COLLISION_PATTERN) for host in history)
-    idle_count = sum(host.count(TransmissionStatus.Idle) for host in history)
+        if self.has_packet(time) and can_start:
+            return TransmissionStatus.Start
 
-    success_rate = success_count / total_time
-    collision_rate = collision_count / total_time
-    idle_rate = idle_count / total_time
-
-    return success_rate, collision_rate, idle_rate
+        return TransmissionStatus.Idle
 
 
-class MacProtocol(Protocol):
-    """Represents a MAC protocol."""
+def extract_success_packets(history: list[TransmissionStatus]):
+    return SUCCESS_PATTERN.findall("".join(map(str, history)))
 
-    def __init__(self, setting: Setting) -> None:
-        """Instantiate a MAC protocol object."""
-        raise NotImplementedError()
 
-    def run_simulation(
-        self, packets: Sequence[Sequence[int]]
-    ) -> list[list[TransmissionStatus]]:
-        """Run the simulation."""
-        raise NotImplementedError()
+def calculate_statistics(setting: Setting, history: list[list[TransmissionStatus]]):
+    """Calculate the statistics of the simulation."""
 
-    @property
-    def name(self) -> str:
-        """The name of the protocol."""
-        raise NotImplementedError()
+    success_packets = itertools.chain(*(extract_success_packets(h) for h in history))
+    success_count = sum(len(success_packet) for success_packet in success_packets)
+
+    idle_count = sum(
+        all(h[i] == TransmissionStatus.Idle for h in history)
+        for i in range(setting.total_time)
+    )
+
+    success_rate = success_count / setting.total_time
+    idle_rate = idle_count / setting.total_time
+    return (success_rate, idle_rate, 1 - success_rate - idle_rate)
 
 
 def mac_protocol(
-    strategy: Callable[[Setting], MacProtocol],
+    impl: Callable[
+        [list[Host], list[list[TransmissionStatus]], Setting, int],
+        list[TransmissionStatus],
+    ]
 ) -> Callable[[Setting, bool], tuple[float, float, float]]:
-    """Decorator for MAC protocol implementations."""
+    """Decorator for creating MAC protocols."""
 
-    @functools.wraps(strategy)
+    @functools.wraps(impl)
     def wrapper(
         setting: Setting, show_history: bool = False
     ) -> tuple[float, float, float]:
-        impl = strategy(setting)
         packets = setting.gen_packets()
-        simulation_result = impl.run_simulation(packets)
+        hosts = [Host(p.copy()) for p in packets]
+        history: list[list[TransmissionStatus]] = []
+
+        for time in range(setting.total_time):
+            actions = impl(hosts, history, setting, time)
+
+            # update the history
+            history.append(actions)
+
+        history = [list(host) for host in zip(*history)]
 
         if show_history:
-            print(impl.name)
-            print_history(packets, simulation_result)
+            print(impl.__name__)
 
-        return create_summary(setting.total_time, simulation_result)
+            for i, h in enumerate(history):
+                # print a 'V' on the timepoint when the host generates a packet
+                spaces = " " * len(f"h{i}: ")
+                generated_timestamps = "".join(
+                    "V" if time in packets[i] else " "
+                    for time in range(setting.total_time)
+                )
+                print(f"{spaces}{generated_timestamps}")
+
+                # print the history of the host
+                print(f"h{i}:", "".join(map(str, h)))
+
+            print()
+
+        return calculate_statistics(setting, history)
 
     return wrapper
 
 
-@dataclass
-class AlohaImpl:
-    setting: Setting
-    name = "aloha"
+@mac_protocol
+def aloha(
+    hosts: list[Host],
+    history: list[list[TransmissionStatus]],
+    setting: Setting,
+    time: int,
+):
+    # decide the action of each host
+    actions: list[TransmissionStatus] = [host.get_action(time) for host in hosts]
 
-    def run_simulation(
-        self, packets: Sequence[Sequence[int]]
-    ) -> list[list[TransmissionStatus]]:
-        raise NotImplementedError()
+    # update the sending progress of each host
+    for host, action in zip(hosts, actions):
+        if action == TransmissionStatus.Sending:
+            host.sending_progress += 1
+        if action == TransmissionStatus.Start:
+            host.sending_progress = 1
+
+    # stop sending if the packet is finished
+    for i, host in enumerate(hosts):
+        if host.sending_progress != setting.packet_time:
+            continue
+
+        host.sending_progress = 0
+        has_collision = any(
+            any(
+                status != TransmissionStatus.Idle
+                for status in itertools.chain(h[:i], h[i + 1 :])
+            )
+            for h in history[time - setting.packet_time : time]
+        )
+
+        if has_collision:
+            actions[i] = TransmissionStatus.Collision
+            host.packets[0] = time + random.randint(1, setting.max_colision_wait_time)
+            continue
+
+        host.packets.pop(0)
+        actions[i] = TransmissionStatus.Success
+
+    return actions
 
 
 @mac_protocol
-def aloha(setting: Setting):
-    return AlohaImpl(setting)
-
-
-@dataclass
-class SlottedAlohaImpl:
-    setting: Setting
-    name = "slotted_aloha"
-
-    def run_simulation(
-        self, packets: Sequence[Sequence[int]]
-    ) -> list[list[TransmissionStatus]]:
-        raise NotImplementedError()
+def slotted_aloha(
+    hosts: list[Host],
+    history: list[list[TransmissionStatus]],
+    setting: Setting,
+    time: int,
+):
+    raise NotImplementedError()
 
 
 @mac_protocol
-def slotted_aloha(setting: Setting):
-    return SlottedAlohaImpl(setting)
-
-
-@dataclass
-class CsmaImpl:
-    setting: Setting
-    name = "csma"
-
-    def run_simulation(
-        self, packets: Sequence[Sequence[int]]
-    ) -> list[list[TransmissionStatus]]:
-        raise NotImplementedError()
+def csma(
+    hosts: list[Host],
+    history: list[list[TransmissionStatus]],
+    setting: Setting,
+    time: int,
+):
+    raise NotImplementedError()
 
 
 @mac_protocol
-def csma(setting: Setting):
-    return CsmaImpl(setting)
-
-
-@dataclass
-class CsmaCdImpl:
-    setting: Setting
-    name = "csma_cd"
-
-    def run_simulation(
-        self, packets: Sequence[Sequence[int]]
-    ) -> list[list[TransmissionStatus]]:
-        raise NotImplementedError()
-
-
-@mac_protocol
-def csma_cd(setting: Setting):
-    return CsmaCdImpl(setting)
+def csma_cd(
+    hosts: list[Host],
+    history: list[list[TransmissionStatus]],
+    setting: Setting,
+    time: int,
+):
+    raise NotImplementedError()
