@@ -18,7 +18,7 @@ def create_setting() -> Setting:
 def main() -> None:
     for protocol in (
         protocols.aloha,
-        # protocols.slotted_aloha,
+        protocols.slotted_aloha,
         # protocols.csma,
         # protocols.csma_cd,
     ):

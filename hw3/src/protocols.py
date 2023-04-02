@@ -6,7 +6,7 @@ import random
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable
+from typing import Callable, TypeVar
 
 from setting import Setting
 
@@ -70,6 +70,13 @@ def calculate_statistics(setting: Setting, history: list[list[TransmissionStatus
     return (success_rate, idle_rate, 1 - success_rate - idle_rate)
 
 
+T = TypeVar("T")
+
+
+def transposed(m: list[list[T]]) -> list[list[T]]:
+    return [list(row) for row in zip(*m)]
+
+
 def mac_protocol(
     impl: Callable[
         [list[Host], list[list[TransmissionStatus]], Setting, int],
@@ -92,7 +99,7 @@ def mac_protocol(
             # update the history
             history.append(actions)
 
-        history = [list(host) for host in zip(*history)]
+        history = transposed(history)
 
         if show_history:
             print(impl.__name__)
@@ -122,9 +129,9 @@ def aloha(
     history: list[list[TransmissionStatus]],
     setting: Setting,
     time: int,
-):
+) -> list[TransmissionStatus]:
     # decide the action of each host
-    actions: list[TransmissionStatus] = [host.get_action(time) for host in hosts]
+    actions = [host.get_action(time) for host in hosts]
 
     # update the sending progress of each host
     for host, action in zip(hosts, actions):
@@ -144,7 +151,9 @@ def aloha(
                 status != TransmissionStatus.Idle
                 for status in itertools.chain(h[:i], h[i + 1 :])
             )
-            for h in history[time - setting.packet_time : time]
+            for h in itertools.chain(
+                history[time - setting.packet_time + 1 : time], [actions]
+            )
         )
 
         if has_collision:
@@ -164,8 +173,53 @@ def slotted_aloha(
     history: list[list[TransmissionStatus]],
     setting: Setting,
     time: int,
-):
-    raise NotImplementedError()
+) -> list[TransmissionStatus]:
+    # decide the action of each host
+    actions = [
+        host.get_action(time, can_start=time % setting.packet_time == 0)
+        for host in hosts
+    ]
+
+    # update the sending progress of each host
+    for host, action in zip(hosts, actions):
+        if action == TransmissionStatus.Sending:
+            host.sending_progress += 1
+        if action == TransmissionStatus.Start:
+            host.sending_progress = 1
+
+    # stop sending if the packet is finished
+    for i, host in enumerate(hosts):
+        if host.sending_progress != setting.packet_time:
+            continue
+
+        host.sending_progress = 0
+        has_collision = any(
+            any(
+                status != TransmissionStatus.Idle
+                for status in itertools.chain(h[:i], h[i + 1 :])
+            )
+            for h in itertools.chain(
+                history[time - setting.packet_time + 1 : time], [actions]
+            )
+        )
+
+        if has_collision:
+            actions[i] = TransmissionStatus.Collision
+
+            # calculate the time to resend the packet
+            wait_slot_num = sum(
+                itertools.takewhile(
+                    lambda _: random.random() > setting.p_resend, itertools.repeat(1)
+                )
+            )
+
+            host.packets[0] = time + 1 + (wait_slot_num * setting.packet_time)
+            continue
+
+        host.packets.pop(0)
+        actions[i] = TransmissionStatus.Success
+
+    return actions
 
 
 @mac_protocol
@@ -174,7 +228,7 @@ def csma(
     history: list[list[TransmissionStatus]],
     setting: Setting,
     time: int,
-):
+) -> list[TransmissionStatus]:
     raise NotImplementedError()
 
 
@@ -184,5 +238,5 @@ def csma_cd(
     history: list[list[TransmissionStatus]],
     setting: Setting,
     time: int,
-):
+) -> list[TransmissionStatus]:
     raise NotImplementedError()
