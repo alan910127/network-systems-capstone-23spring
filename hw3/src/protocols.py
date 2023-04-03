@@ -6,7 +6,7 @@ import random
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable, TypeVar
+from typing import Callable, Iterable, Sequence, TypeVar
 
 from setting import Setting
 
@@ -23,7 +23,6 @@ class TransmissionStatus(Enum):
 
 
 SUCCESS_PATTERN = re.compile(r"<-*>")
-COLLISION_PATTERN = re.compile(r"<-*\|")
 
 
 @dataclass
@@ -73,7 +72,7 @@ def calculate_statistics(setting: Setting, history: list[list[TransmissionStatus
 T = TypeVar("T")
 
 
-def transposed(m: list[list[T]]) -> list[list[T]]:
+def transposed(m: Iterable[Iterable[T]]) -> list[list[T]]:
     return [list(row) for row in zip(*m)]
 
 
@@ -123,6 +122,29 @@ def mac_protocol(
     return wrapper
 
 
+def update_progress(
+    hosts: Iterable[Host], actions: Iterable[TransmissionStatus]
+) -> None:
+    for host, action in zip(hosts, actions):
+        if action == TransmissionStatus.Sending:
+            host.sending_progress += 1
+        if action == TransmissionStatus.Start:
+            host.sending_progress = 1
+
+
+def finished_hosts(hosts: Iterable[Host], packet_time: int):
+    yield from (
+        (i, host)
+        for i, host in enumerate(hosts)
+        if host.sending_progress == packet_time
+    )
+
+
+def non_self_statuses(history: Iterable[Sequence[TransmissionStatus]], host_id: int):
+    for h in history:
+        yield from itertools.chain(h[:host_id], h[host_id + 1 :])
+
+
 @mac_protocol
 def aloha(
     hosts: list[Host],
@@ -134,25 +156,15 @@ def aloha(
     actions = [host.get_action(time) for host in hosts]
 
     # update the sending progress of each host
-    for host, action in zip(hosts, actions):
-        if action == TransmissionStatus.Sending:
-            host.sending_progress += 1
-        if action == TransmissionStatus.Start:
-            host.sending_progress = 1
+    update_progress(hosts, actions)
 
     # stop sending if the packet is finished
-    for i, host in enumerate(hosts):
-        if host.sending_progress != setting.packet_time:
-            continue
-
+    for i, host in finished_hosts(hosts, setting.packet_time):
         host.sending_progress = 0
         has_collision = any(
-            any(
-                status != TransmissionStatus.Idle
-                for status in itertools.chain(h[:i], h[i + 1 :])
-            )
-            for h in itertools.chain(
-                history[time - setting.packet_time + 1 : time], [actions]
+            status != TransmissionStatus.Idle
+            for status in non_self_statuses(
+                itertools.chain(history[-setting.packet_time + 1 :], [actions]), i
             )
         )
 
@@ -175,31 +187,24 @@ def slotted_aloha(
     time: int,
 ) -> list[TransmissionStatus]:
     # decide the action of each host
-    actions = [
-        host.get_action(time, can_start=time % setting.packet_time == 0)
-        for host in hosts
-    ]
+    actions = [host.get_action(time) for host in hosts]
+
+    # one can only start sending if it's at the beginning of the time slot
+    can_start = time % setting.packet_time == 0
+    for i, action in enumerate(actions):
+        if action == TransmissionStatus.Start and not can_start:
+            actions[i] = TransmissionStatus.Idle
 
     # update the sending progress of each host
-    for host, action in zip(hosts, actions):
-        if action == TransmissionStatus.Sending:
-            host.sending_progress += 1
-        if action == TransmissionStatus.Start:
-            host.sending_progress = 1
+    update_progress(hosts, actions)
 
     # stop sending if the packet is finished
-    for i, host in enumerate(hosts):
-        if host.sending_progress != setting.packet_time:
-            continue
-
+    for i, host in finished_hosts(hosts, setting.packet_time):
         host.sending_progress = 0
         has_collision = any(
-            any(
-                status != TransmissionStatus.Idle
-                for status in itertools.chain(h[:i], h[i + 1 :])
-            )
-            for h in itertools.chain(
-                history[time - setting.packet_time + 1 : time], [actions]
+            status != TransmissionStatus.Idle
+            for status in non_self_statuses(
+                itertools.chain(history[-setting.packet_time + 1 :], [actions]), i
             )
         )
 
@@ -229,7 +234,52 @@ def csma(
     setting: Setting,
     time: int,
 ) -> list[TransmissionStatus]:
-    raise NotImplementedError()
+    # decide the action of each host
+
+    def can_start(host_id: int):
+        result = time <= setting.link_delay or all(
+            status
+            in (
+                TransmissionStatus.Idle,
+                TransmissionStatus.Success,
+                TransmissionStatus.Collision,
+            )
+            for status in non_self_statuses([history[-setting.link_delay - 1]], host_id)
+        )
+        return result
+
+    actions = [host.get_action(time) for host in hosts]
+
+    # one can only start sending if there's no packet being sent in the link
+    for i, (host, action) in enumerate(zip(hosts, actions)):
+        if action == TransmissionStatus.Start and not can_start(i):
+            actions[i] = TransmissionStatus.Idle
+
+            # wait for a random time before trying again
+            host.packets[0] = time + random.randint(1, setting.max_colision_wait_time)
+
+    # update the sending progress of each host
+    update_progress(hosts, actions)
+
+    # stop sending if the packet is finished
+    for i, host in finished_hosts(hosts, setting.packet_time):
+        host.sending_progress = 0
+        has_collision = any(
+            status != TransmissionStatus.Idle
+            for status in non_self_statuses(
+                itertools.chain(history[-setting.packet_time + 1 :], [actions]), i
+            )
+        )
+
+        if has_collision:
+            actions[i] = TransmissionStatus.Collision
+            host.packets[0] = time + random.randint(1, setting.max_colision_wait_time)
+            continue
+
+        host.packets.pop(0)
+        actions[i] = TransmissionStatus.Success
+
+    return actions
 
 
 @mac_protocol

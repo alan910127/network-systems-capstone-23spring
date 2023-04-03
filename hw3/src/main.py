@@ -19,7 +19,7 @@ def main() -> None:
     for protocol in (
         protocols.aloha,
         protocols.slotted_aloha,
-        # protocols.csma,
+        protocols.csma,
         # protocols.csma_cd,
     ):
         success_rate, idle_rate, collision_rate = protocol(create_setting(), True)
