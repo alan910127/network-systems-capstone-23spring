@@ -23,7 +23,6 @@ def main() -> None:
         protocols.csma_cd,
     ):
         success_rate, idle_rate, collision_rate = protocol(create_setting(), True)
-        print(f"{protocol.__name__}:")
         print(f"success_rate: {success_rate:.2f}")
         print(f"idle_rate: {idle_rate:.2f}")
         print(f"collision_rate: {collision_rate:.2f}")
