@@ -9,8 +9,9 @@ class Setting:
         total_time: int = 10000,
         packet_num: int = 500,
         packet_size: int = 5,
-        max_colision_wait_time: int = 20,
-        p_resend: float = 0.3,
+        max_colision_wait_time: Optional[int] = None,
+        p_resend: Optional[float] = None,
+        coefficient: int = 8,
         link_delay: int = 1,
         seed: Optional[int] = None,
     ) -> None:
@@ -30,15 +31,19 @@ class Setting:
         Suppose that the time needed to wait for ACK is equal to link delay. 
         """
 
-        self.max_colision_wait_time = max_colision_wait_time
-        """The maximum wait time for ALOHA, CSMA and CSMA/cD to resend a packet."""
+        self.packet_size = packet_size
 
-        self.p_resend = p_resend
+        self.max_colision_wait_time = max_colision_wait_time or (
+            host_num * packet_size * coefficient
+        )
+        """The maximum wait time for ALOHA, CSMA and CSMA/CD to resend a packet."""
+
+        self.p_resend = p_resend or (1 / (host_num * coefficient))
         """The probability of resending a packet when a slot starts in slotted ALOHA."""
 
         self.link_delay = link_delay
 
-        self.seed = random.randint(1, 10000) if seed is None else seed
+        self.seed = seed or random.randint(1, 10000)
         """Seed for random number generator."""
 
     # hosts產生封包的時間
@@ -48,7 +53,7 @@ class Setting:
     #    [30, 50, 60]] # host 2
     def gen_packets(self):
         def generate_for_host():
-            max_timepoint = self.total_time - self.packet_time
+            max_timepoint = self.total_time - self.packet_size
             timepoints = random.sample(range(1, max_timepoint), self.packet_num)
             return sorted(timepoints)
 
