@@ -234,8 +234,6 @@ def csma(
     setting: Setting,
     time: int,
 ) -> list[TransmissionStatus]:
-    # decide the action of each host
-
     def can_start(host_id: int):
         result = time <= setting.link_delay or all(
             status
@@ -248,6 +246,7 @@ def csma(
         )
         return result
 
+    # decide the action of each host
     actions = [host.get_action(time) for host in hosts]
 
     # one can only start sending if there's no packet being sent in the link
@@ -289,4 +288,61 @@ def csma_cd(
     setting: Setting,
     time: int,
 ) -> list[TransmissionStatus]:
-    raise NotImplementedError()
+    def can_start(host_id: int):
+        result = time <= setting.link_delay or all(
+            status
+            in (
+                TransmissionStatus.Idle,
+                TransmissionStatus.Success,
+                TransmissionStatus.Collision,
+            )
+            for status in non_self_statuses([history[-setting.link_delay - 1]], host_id)
+        )
+        return result
+
+    # decide the action of each host
+    actions = [host.get_action(time) for host in hosts]
+
+    # one can only start sending if there's no packet being sent in the link
+    for i, (host, action) in enumerate(zip(hosts, actions)):
+        if action == TransmissionStatus.Start and not can_start(i):
+            actions[i] = TransmissionStatus.Idle
+
+            # wait for a random time before trying again
+            host.packets[0] = time + random.randint(1, setting.max_colision_wait_time)
+
+    # update the sending progress of each host
+    update_progress(hosts, actions)
+
+    # detect collision, or stop sending if the packet is finished
+    for i, host in enumerate(hosts):
+        if actions[i] == TransmissionStatus.Idle:
+            continue
+
+        has_collision = any(
+            status != TransmissionStatus.Idle
+            for status in non_self_statuses(
+                history[
+                    -host.sending_progress
+                    + 1
+                    - setting.link_delay : -setting.link_delay
+                ],
+                i,
+            )
+        )
+
+        if has_collision:
+            host.sending_progress = 0
+            host.packets[0] = time + random.randint(1, setting.max_colision_wait_time)
+            actions[i] = TransmissionStatus.Collision
+            continue
+
+        if host.sending_progress != setting.packet_time:
+            # keep sending
+            continue
+
+        host.sending_progress = 0
+        host.packets.pop(0)
+        actions[i] = TransmissionStatus.Success
+
+    return actions
