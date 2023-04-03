@@ -21,6 +21,9 @@ class TransmissionStatus(Enum):
     def __str__(self) -> str:
         return self.value
 
+    def is_idle_lossy(self):
+        return self in (self.Idle, self.Success, self.Collision)
+
 
 SUCCESS_PATTERN = re.compile(r"<-*>")
 
@@ -243,12 +246,7 @@ def csma(
 ) -> list[TransmissionStatus]:
     def can_start(host_id: int):
         result = time <= setting.link_delay or all(
-            status
-            in (
-                TransmissionStatus.Idle,
-                TransmissionStatus.Success,
-                TransmissionStatus.Collision,
-            )
+            status.is_idle_lossy()
             for status in non_self_statuses([history[-setting.link_delay - 1]], host_id)
         )
         return result
@@ -270,6 +268,7 @@ def csma(
     # stop sending if the packet is finished
     for i, host in finished_hosts(hosts, setting.packet_time):
         host.sending_progress = 0
+
         has_collision = any(
             status != TransmissionStatus.Idle
             for status in non_self_statuses(
@@ -297,12 +296,7 @@ def csma_cd(
 ) -> list[TransmissionStatus]:
     def can_start(host_id: int):
         result = time <= setting.link_delay or all(
-            status
-            in (
-                TransmissionStatus.Idle,
-                TransmissionStatus.Success,
-                TransmissionStatus.Collision,
-            )
+            status.is_idle_lossy()
             for status in non_self_statuses([history[-setting.link_delay - 1]], host_id)
         )
         return result
@@ -326,14 +320,15 @@ def csma_cd(
         if actions[i] == TransmissionStatus.Idle:
             continue
 
-        has_collision = any(
+        window_start = max(time - host.sending_progress - setting.link_delay + 1, 0)
+        window_end = max(time - setting.link_delay, 0)
+        has_collision = time >= setting.link_delay and any(
             status != TransmissionStatus.Idle
             for status in non_self_statuses(
-                history[
-                    -host.sending_progress
-                    + 1
-                    - setting.link_delay : -setting.link_delay
-                ],
+                itertools.chain(
+                    history[window_start:window_end],
+                    (actions,) if setting.link_delay == 0 else (),
+                ),
                 i,
             )
         )
