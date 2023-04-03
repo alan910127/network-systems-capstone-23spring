@@ -174,7 +174,8 @@ def aloha(
         has_collision = any(
             status != TransmissionStatus.Idle
             for status in non_self_statuses(
-                itertools.chain(history[-setting.packet_time + 1 :], [actions]), i
+                itertools.chain(history[-setting.packet_time + 1 :], (actions,)),
+                i,
             )
         )
 
@@ -214,7 +215,8 @@ def slotted_aloha(
         has_collision = any(
             status != TransmissionStatus.Idle
             for status in non_self_statuses(
-                itertools.chain(history[-setting.packet_time + 1 :], [actions]), i
+                itertools.chain(history[-setting.packet_time + 1 :], (actions,)),
+                i,
             )
         )
 
@@ -247,7 +249,10 @@ def csma(
     def can_start(host_id: int):
         result = time <= setting.link_delay or all(
             status.is_idle_lossy()
-            for status in non_self_statuses([history[-setting.link_delay - 1]], host_id)
+            for status in non_self_statuses(
+                (history[-setting.link_delay - 1],),
+                host_id,
+            )
         )
         return result
 
@@ -272,7 +277,8 @@ def csma(
         has_collision = any(
             status != TransmissionStatus.Idle
             for status in non_self_statuses(
-                itertools.chain(history[-setting.packet_time + 1 :], [actions]), i
+                itertools.chain(history[-setting.packet_time + 1 :], (actions,)),
+                i,
             )
         )
 
@@ -297,7 +303,10 @@ def csma_cd(
     def can_start(host_id: int):
         result = time <= setting.link_delay or all(
             status.is_idle_lossy()
-            for status in non_self_statuses([history[-setting.link_delay - 1]], host_id)
+            for status in non_self_statuses(
+                (history[-setting.link_delay - 1],),
+                host_id,
+            )
         )
         return result
 
@@ -320,15 +329,10 @@ def csma_cd(
         if actions[i] == TransmissionStatus.Idle:
             continue
 
-        window_start = max(time - host.sending_progress - setting.link_delay + 1, 0)
-        window_end = max(time - setting.link_delay, 0)
-        has_collision = time >= setting.link_delay and any(
+        has_collision = time > setting.link_delay and any(
             status != TransmissionStatus.Idle
             for status in non_self_statuses(
-                itertools.chain(
-                    history[window_start:window_end],
-                    (actions,) if setting.link_delay == 0 else (),
-                ),
+                (history[-setting.link_delay - 1],),
                 i,
             )
         )
