@@ -39,11 +39,11 @@ class Host:
     def has_packet(self, time: int) -> bool:
         return len(self.packets) > 0 and self.packets[0] <= time
 
-    def get_action(self, time: int, can_start: bool = True) -> TransmissionStatus:
+    def get_action(self, time: int) -> TransmissionStatus:
         if self.is_sending():
             return TransmissionStatus.Sending
 
-        if self.has_packet(time) and can_start:
+        if self.has_packet(time):
             return TransmissionStatus.Start
 
         return TransmissionStatus.Idle
