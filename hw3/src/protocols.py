@@ -48,6 +48,13 @@ class Host:
 
         return TransmissionStatus.Idle
 
+    def wait_until(self, time: int):
+        self.packets[0] = time
+
+    def finish_packet(self):
+        self.sending_progress = 0
+        self.packets.pop(0)
+
 
 def extract_success_packets(history: list[TransmissionStatus]):
     return SUCCESS_PATTERN.findall("".join(map(str, history)))
@@ -170,10 +177,10 @@ def aloha(
 
         if has_collision:
             actions[i] = TransmissionStatus.Collision
-            host.packets[0] = time + random.randint(1, setting.max_colision_wait_time)
+            host.wait_until(time + random.randint(1, setting.max_colision_wait_time))
             continue
 
-        host.packets.pop(0)
+        host.finish_packet()
         actions[i] = TransmissionStatus.Success
 
     return actions
@@ -218,10 +225,10 @@ def slotted_aloha(
                 )
             )
 
-            host.packets[0] = time + 1 + (wait_slot_num * setting.packet_time)
+            host.wait_until(time + 1 + (wait_slot_num * setting.packet_time))
             continue
 
-        host.packets.pop(0)
+        host.finish_packet()
         actions[i] = TransmissionStatus.Success
 
     return actions
@@ -255,7 +262,7 @@ def csma(
             actions[i] = TransmissionStatus.Idle
 
             # wait for a random time before trying again
-            host.packets[0] = time + random.randint(1, setting.max_colision_wait_time)
+            host.wait_until(time + random.randint(1, setting.max_colision_wait_time))
 
     # update the sending progress of each host
     update_progress(hosts, actions)
@@ -272,10 +279,10 @@ def csma(
 
         if has_collision:
             actions[i] = TransmissionStatus.Collision
-            host.packets[0] = time + random.randint(1, setting.max_colision_wait_time)
+            host.wait_until(time + random.randint(1, setting.max_colision_wait_time))
             continue
 
-        host.packets.pop(0)
+        host.finish_packet()
         actions[i] = TransmissionStatus.Success
 
     return actions
@@ -309,7 +316,7 @@ def csma_cd(
             actions[i] = TransmissionStatus.Idle
 
             # wait for a random time before trying again
-            host.packets[0] = time + random.randint(1, setting.max_colision_wait_time)
+            host.wait_until(time + random.randint(1, setting.max_colision_wait_time))
 
     # update the sending progress of each host
     update_progress(hosts, actions)
@@ -333,7 +340,7 @@ def csma_cd(
 
         if has_collision:
             host.sending_progress = 0
-            host.packets[0] = time + random.randint(1, setting.max_colision_wait_time)
+            host.wait_until(time + random.randint(1, setting.max_colision_wait_time))
             actions[i] = TransmissionStatus.Collision
             continue
 
@@ -341,8 +348,7 @@ def csma_cd(
             # keep sending
             continue
 
-        host.sending_progress = 0
-        host.packets.pop(0)
+        host.finish_packet()
         actions[i] = TransmissionStatus.Success
 
     return actions
