@@ -281,11 +281,6 @@ TEST_DATA = [
 ]
 
 
-def main():
-    test_ospf()
-    test_rip()
-
-
 def test_ospf():
     ospf_result = [run_ospf(link_cost) for link_cost in TEST_DATA]
 
@@ -438,6 +433,26 @@ def test_rip():
             (3, 2),
         ],
     ), "RIP test 2 failed"
+
+
+def main():
+    topology = [
+        [0, 2, 5, 1, 999, 999],
+        [2, 0, 3, 2, 999, 999],
+        [5, 3, 0, 3, 1, 5],
+        [1, 2, 3, 0, 1, 999],
+        [999, 999, 1, 1, 0, 2],
+        [999, 999, 5, 999, 2, 0],
+    ]
+
+    ospf_result = run_ospf(topology)
+    rip_result = run_rip(topology)
+
+    print("OSPF")
+    print(ospf_result)
+
+    print("RIP")
+    print(rip_result)
 
 
 if __name__ == "__main__":
