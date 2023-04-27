@@ -9,7 +9,9 @@ from heapq import heappop, heappush
 from typing import Generic, Protocol, TypeVar
 
 NO_LINK = 999
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.DEBUG, format="%(levelname)s: %(message)s", datefmt="%H:%M:%S"
+)
 logger = logging.getLogger("nscap")
 
 
@@ -60,6 +62,10 @@ class OspfRouter:
         """Send the link state to the router."""
 
         for id, link_cost in self.updated_link_states:
+            # do not send the link state to the router itself
+            if id == router.id:
+                continue
+
             logger.debug(f"Router {self.id} sends link state of {id} to {router.id}.")
             service.send(
                 LinkState(
