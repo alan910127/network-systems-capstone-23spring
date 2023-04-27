@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+import heapq
 import itertools
 import logging
+import pprint
 from dataclasses import dataclass
-from heapq import heappop, heappush
 from typing import Generic, Protocol, TypeVar
 
 NO_LINK = 999
 logging.basicConfig(
-    level=logging.DEBUG, format="%(levelname)s: %(message)s", datefmt="%H:%M:%S"
+    level=logging.INFO, format="%(levelname)s: %(message)s", datefmt="%H:%M:%S"
 )
 logger = logging.getLogger("nscap")
 
@@ -128,14 +129,14 @@ class OspfRouter:
         shortest_path = [999] * len(self.link_cost)
 
         while heap:
-            cost, id = heappop(heap)
+            cost, id = heapq.heappop(heap)
             if cost >= shortest_path[id]:
                 continue
             shortest_path[id] = cost
             for i, cost in enumerate(self.link_cost[id]):
                 path_distance = cost + shortest_path[id]
                 if path_distance < shortest_path[i]:
-                    heappush(heap, (path_distance, i))
+                    heapq.heappush(heap, (path_distance, i))
 
         return shortest_path
 
@@ -282,11 +283,11 @@ def main():
     ospf_result = run_ospf(topology)
     rip_result = run_rip(topology)
 
-    print("OSPF")
-    print(ospf_result)
+    pp = pprint.PrettyPrinter(compact=True, width=40).pprint
 
-    print("RIP")
-    print(rip_result)
+    pp(ospf_result)
+    print()
+    pp(rip_result)
 
 
 if __name__ == "__main__":
