@@ -1,28 +1,48 @@
+import logging
+import socket
+
+from quic_impl import Connection
+
+logger = logging.getLogger("quic_client")
+
+
 class QUICClient:
+    def __init__(self):
+        """Initialize the QUIC client."""
+
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.connection: Connection | None = None
+
     def connect(self, socket_addr: tuple[str, int]) -> None:
         """Connect to a QUIC server on the given socket address."""
 
-        raise NotImplementedError()
+        self.connection = Connection(socket_addr)
+        self.connection.client_handshake()
+        logger.info(f"Connected to {socket_addr[0]}:{socket_addr[1]}")
 
     def send(self, stream_id: int, data: bytes) -> None:
         """Send data on the given stream."""
 
-        raise NotImplementedError()
+        if self.connection is None:
+            raise RuntimeError("No server connected")
+
+        self.connection.send(stream_id, data)
 
     def recv(self) -> tuple[int, bytes]:
-        """Receive data on any stream.
+        """Receive data on any stream."""
 
-        Returns:
-            int: The stream ID.
-            bytes: The data.
-        """
+        if self.connection is None:
+            raise RuntimeError("No server connected")
 
-        raise NotImplementedError()
+        return self.connection.recv()
 
     def close(self) -> None:
         """Close the connection and the socket."""
 
-        raise NotImplementedError()
+        if self.connection is not None:
+            self.connection.close()
+
+        self.socket.close()
 
 
 def main():
