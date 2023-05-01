@@ -1,24 +1,27 @@
 import logging
-import socket
 
-from quic_impl import Connection
+from quic_impl import QUICConnection
 
-logger = logging.getLogger("quic_client")
+logger = logging.getLogger("QUIC_CLIENT")
 
 
 class QUICClient:
     def __init__(self):
         """Initialize the QUIC client."""
 
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.connection: Connection | None = None
+        self.connection: QUICConnection | None = None
 
     def connect(self, socket_addr: tuple[str, int]) -> None:
         """Connect to a QUIC server on the given socket address."""
 
-        self.connection = Connection(socket_addr)
-        self.connection.client_handshake()
-        logger.info(f"Connected to {socket_addr[0]}:{socket_addr[1]}")
+        self.connection = (
+            QUICConnection.builder()
+            .set_peer_address(socket_addr)
+            .with_client_handshake()
+        )
+
+        ip, port = socket_addr
+        logger.info(f"Connected to {ip}:{port}")
 
     def send(self, stream_id: int, data: bytes) -> None:
         """Send data on the given stream."""
@@ -41,8 +44,6 @@ class QUICClient:
 
         if self.connection is not None:
             self.connection.close()
-
-        self.socket.close()
 
 
 def main():

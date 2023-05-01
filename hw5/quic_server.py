@@ -1,9 +1,9 @@
 import logging
 import socket
 
-from quic_impl import Connection
+from quic_impl import QUICConnection
 
-logger = logging.getLogger("quic_server")
+logger = logging.getLogger("QUIC_SERVER")
 
 
 class QUICServer:
@@ -11,22 +11,24 @@ class QUICServer:
         """Initialize the QUIC server."""
 
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.connection: Connection | None = None
+        self.connection: QUICConnection | None = None
 
     def listen(self, socket_addr: tuple[str, int]) -> None:
         """Listen for incoming QUIC connections on the given socket address."""
 
         self.socket.bind(socket_addr)
-        logger.info(f"Server listening on {socket_addr[0]}:{socket_addr[1]}")
+
+        ip, port = self.socket.getsockname()
+        logger.info(f"Listening on {ip}:{port}")
 
     def accept(self) -> None:
         """Accept an incoming QUIC connection."""
 
-        data, address = self.socket.recvfrom(4096)
-        logger.debug(f"{data=}")
-        logger.info(f"Accepted a connection from {address[0]}:{address[1]}")
-        self.connection = Connection(address)
-        self.connection.server_handshake()
+        self.connection, ip, port = QUICConnection.builder().with_server_handshake(
+            self.socket
+        )
+
+        logger.info(f"Accepted connection from {ip}:{port}")
 
     def send(self, stream_id: int, data: bytes) -> None:
         """Send data on the given stream."""
