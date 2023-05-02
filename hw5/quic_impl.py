@@ -4,7 +4,8 @@ import ctypes
 import logging
 import os
 import socket
-from threading import Thread
+from threading import Event, Thread
+from typing import Callable
 
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO").upper(),
@@ -46,6 +47,7 @@ class QUICConnectionBuilder:
 
         self.address: tuple[str, int] | None = None
         self.send_window_size: int | None = None
+        self.sock: socket.socket | None = None
         self.receive_window_size = 1500  # default to 1500, can be overwritten
 
     def set_peer_address(self, address: tuple[str, int]) -> QUICConnectionBuilder:
@@ -54,16 +56,22 @@ class QUICConnectionBuilder:
         self.address = address
         return self
 
-    def set_receive_window_size(self, size: int) -> QUICConnectionBuilder:
-        """Set the receive window size."""
-
-        self.receive_window_size = size
-        return self
-
     def set_send_window_size(self, size: int) -> QUICConnectionBuilder:
         """Set the send window size."""
 
         self.send_window_size = size
+        return self
+
+    def set_socket(self, sock: socket.socket) -> QUICConnectionBuilder:
+        """Set the socket."""
+
+        self.sock = sock
+        return self
+
+    def set_receive_window_size(self, size: int) -> QUICConnectionBuilder:
+        """Set the receive window size."""
+
+        self.receive_window_size = size
         return self
 
     def with_server_handshake(
@@ -95,6 +103,7 @@ class QUICConnectionBuilder:
 
         return (
             self.set_send_window_size(client_receive_size)
+            .set_socket(sock)
             .set_peer_address(client_address)
             .build(),
             client_address[0],
@@ -124,6 +133,7 @@ class QUICConnectionBuilder:
 
         return (
             self.set_send_window_size(server_receive_size)
+            .set_socket(sock)
             .set_peer_address(self.address)
             .build()
         )
@@ -135,8 +145,11 @@ class QUICConnectionBuilder:
             raise ValueError("Peer address is not set")
         if self.send_window_size is None:
             raise ValueError("Send window size is not set")
+        if self.sock is None:
+            raise ValueError("Socket is not set")
 
         return QUICConnection(
+            self.sock,
             self.address,
             self.receive_window_size,
             self.send_window_size,
@@ -146,6 +159,7 @@ class QUICConnectionBuilder:
 class QUICConnection:
     def __init__(
         self,
+        sock: socket.socket,
         peer_address: tuple[str, int],
         receive_window_size: int,
         send_window_size: int,
@@ -153,8 +167,8 @@ class QUICConnection:
         """Initialize the QUIC connection."""
 
         self.peer_address = peer_address
-        self.sender = QUICMessageSender(peer_address, send_window_size)
-        self.receiver = QUICMessageReceiver(peer_address, receive_window_size)
+        self.sender = QUICMessageSender(sock, peer_address, send_window_size)
+        self.receiver = QUICMessageReceiver(sock, peer_address, receive_window_size)
 
     @staticmethod
     def builder() -> QUICConnectionBuilder:
@@ -179,11 +193,35 @@ class QUICConnection:
         self.receiver.close()
 
 
+class QUICMessageWorker:
+    def __init__(self, workhorse: Callable[[Callable[[], bool]], None]) -> None:
+        """Initialize the QUIC message worker."""
+
+        self.worker = Thread(target=workhorse, args=(self.is_stopped,))
+        self.stop_event = Event()
+
+    def stop(self) -> None:
+        """Stop the QUIC message worker."""
+
+        self.stop_event.set()
+        self.worker.join()
+
+    def is_stopped(self) -> bool:
+        """Check if the QUIC message worker is stopped."""
+
+        return self.stop_event.is_set()
+
+
 class QUICMessageSender:
-    def __init__(self, address: tuple[str, int], send_window_size: int) -> None:
+    def __init__(
+        self, sock: socket.socket, address: tuple[str, int], send_window_size: int
+    ) -> None:
         """Initialize the QUIC message sender."""
 
-        self.worker = Thread(target=self.worker_thread, args=(address,))
+        self.sock = sock
+        self.address = address
+        self.send_window_size = send_window_size
+        self.worker = QUICMessageWorker(self.workhorse)
         self.message_queue: dict[int, list[bytes]] = {}
 
     def send(self, stream_id: int, data: bytes) -> None:
@@ -194,19 +232,25 @@ class QUICMessageSender:
     def close(self):
         """Close the QUIC message sender."""
 
-        self.worker.join()
+        self.worker.stop()
 
-    def worker_thread(self, address: tuple[str, int]) -> None:
-        """The sender worker thread."""
+    def workhorse(self, is_stopped: Callable[[], bool]) -> None:
+        """The sender workhorse"""
 
-        raise NotImplementedError()
+        while not is_stopped():
+            raise NotImplementedError()
 
 
 class QUICMessageReceiver:
-    def __init__(self, address: tuple[str, int], receive_window_size: int) -> None:
+    def __init__(
+        self, sock: socket.socket, address: tuple[str, int], receive_window_size: int
+    ) -> None:
         """Initialize the QUIC message receiver."""
 
-        self.worker = Thread(target=self.worker_thread, args=(address,))
+        self.sock = sock
+        self.address = address
+        self.receive_window_size = receive_window_size
+        self.worker = QUICMessageWorker(self.workhorse)
         self.message_queue: dict[int, list[bytes]] = {}
 
     def recv(self) -> tuple[int, bytes]:
@@ -217,9 +261,10 @@ class QUICMessageReceiver:
     def close(self):
         """Close the QUIC message receiver."""
 
-        self.worker.join()
+        self.worker.stop()
 
-    def worker_thread(self, address: tuple[str, int]) -> None:
-        """The receiver worker thread."""
+    def workhorse(self, is_stopped: Callable[[], bool]) -> None:
+        """The receiver workhorse."""
 
-        raise NotImplementedError()
+        while not is_stopped():
+            raise NotImplementedError()
