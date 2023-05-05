@@ -24,10 +24,12 @@ class QUICServer:
     def accept(self) -> None:
         """Accept an incoming QUIC connection."""
 
-        self.connection, ip, port = QUICConnection.builder().with_server_handshake(
-            self.socket
-        )
+        connection = QUICConnection.accept_one(self.socket)
 
+        if connection is None:
+            return
+
+        self.connection, ip, port = connection
         logger.info(f"Accepted connection from {ip}:{port}")
 
     def send(self, stream_id: int, data: bytes) -> None:

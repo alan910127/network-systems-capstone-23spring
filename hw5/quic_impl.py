@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import ctypes
 import logging
 import os
 import socket
-from threading import Event, Thread
-from typing import Callable
+import time
+from threading import Thread
+
+RETRY_COUNT = 3
 
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO").upper(),
@@ -31,240 +32,93 @@ set_logging_color(logging.CRITICAL, 35)  # magenta
 logger = logging.getLogger("QUIC_IMPL")
 
 
-class HandshakePacket(ctypes.BigEndianStructure):
-    _fields_ = [
-        ("window_size", ctypes.c_uint32),
-    ]
-
-
-def get_window_size(data: bytes) -> int:
-    return HandshakePacket.from_buffer_copy(data).window_size
-
-
-class QUICConnectionBuilder:
-    def __init__(self):
-        """Initialize the QUIC connection builder."""
-
-        self.address: tuple[str, int] | None = None
-        self.send_window_size: int | None = None
-        self.sock: socket.socket | None = None
-        self.receive_window_size = 1500  # default to 1500, can be overwritten
-
-    def set_peer_address(self, address: tuple[str, int]) -> QUICConnectionBuilder:
-        """Set the peer address."""
-
-        self.address = address
-        return self
-
-    def set_send_window_size(self, size: int) -> QUICConnectionBuilder:
-        """Set the send window size."""
-
-        self.send_window_size = size
-        return self
-
-    def set_socket(self, sock: socket.socket) -> QUICConnectionBuilder:
-        """Set the socket."""
-
-        self.sock = sock
-        return self
-
-    def set_receive_window_size(self, size: int) -> QUICConnectionBuilder:
-        """Set the receive window size."""
-
-        self.receive_window_size = size
-        return self
-
-    def with_server_handshake(
-        self, sock: socket.socket
-    ) -> tuple[QUICConnection, str, int]:
-        """Perform the QUIC handshake from a server's view."""
-
-        # Receive the initial packet from the client
-        data, client_address = sock.recvfrom(self.receive_window_size)
-        client_receive_size = get_window_size(data)
-        logger.debug(f"{client_receive_size=}")
-
-        sock.settimeout(1.0)
-        # Try to send the initial packet to the client until it is received
-        while True:
-            try:
-                # Send the initial packet to the client
-                packet = HandshakePacket(window_size=self.receive_window_size)
-                sock.sendto(bytes(packet), client_address)
-
-                # Receive the ACK packet from the client
-                data = sock.recv(self.receive_window_size)
-                if data == b"ACK\n":
-                    break
-            except TimeoutError:
-                logger.debug("Handshake timeout, retrying...")
-
-        sock.settimeout(None)
-
-        return (
-            self.set_send_window_size(client_receive_size)
-            .set_socket(sock)
-            .set_peer_address(client_address)
-            .build(),
-            client_address[0],
-            client_address[1],
-        )
-
-    def with_client_handshake(self) -> QUICConnection:
-        """Perform the QUIC handshake from a client's view."""
-
-        if self.address is None:
-            raise ValueError("The peer address must be set")
-
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-
-        # Send the initial packet to the server
-        packet = HandshakePacket(window_size=self.receive_window_size)
-        sock.sendto(bytes(packet), self.address)
-
-        # Receive the initial packet from the server
-        data = sock.recv(self.receive_window_size)
-        server_receive_size = get_window_size(data)
-        logger.debug(f"{server_receive_size=}")
-
-        # Send the ACK packet to the server
-        n = sock.sendto(b"ACK\n", self.address)
-        logger.debug(f"{n=}")
-
-        return (
-            self.set_send_window_size(server_receive_size)
-            .set_socket(sock)
-            .set_peer_address(self.address)
-            .build()
-        )
-
-    def build(self) -> QUICConnection:
-        """Build the QUIC connection."""
-
-        if self.address is None:
-            raise ValueError("Peer address is not set")
-        if self.send_window_size is None:
-            raise ValueError("Send window size is not set")
-        if self.sock is None:
-            raise ValueError("Socket is not set")
-
-        return QUICConnection(
-            self.sock,
-            self.address,
-            self.receive_window_size,
-            self.send_window_size,
-        )
-
-
 class QUICConnection:
-    def __init__(
-        self,
-        sock: socket.socket,
-        peer_address: tuple[str, int],
-        receive_window_size: int,
-        send_window_size: int,
-    ) -> None:
+    def __init__(self, sock: socket.socket) -> None:
         """Initialize the QUIC connection."""
 
-        self.peer_address = peer_address
-        self.sender = QUICMessageSender(sock, peer_address, send_window_size)
-        self.receiver = QUICMessageReceiver(sock, peer_address, receive_window_size)
+        self.socket = sock
+        self.is_closed = False
 
-    @staticmethod
-    def builder() -> QUICConnectionBuilder:
-        """Create a new QUIC connection builder."""
+        self.sender = Thread(target=self.sender_thread)
+        self.receiver = Thread(target=self.receiver_thread)
 
-        return QUICConnectionBuilder()
+        self.sender.start()
+        self.receiver.start()
+
+    @classmethod
+    def accept_one(cls, sock: socket.socket) -> tuple[QUICConnection, str, int] | None:
+        """Accept a single QUIC connection on the given socket."""
+
+        data, addr = sock.recvfrom(1024)
+        logger.debug(f"Received {data!r} from {addr}")
+
+        for _ in range(RETRY_COUNT):
+            n = sock.sendto(b"HELLO", addr)
+            logger.debug(f"Sent {n} bytes to {addr}")
+
+            data, addr = sock.recvfrom(1024)
+            logger.debug(f"Received {data!r} from {addr}")
+
+            if data == b"ACK":
+                break
+        else:
+            logger.error("Failed to establish connection")
+            return None
+
+        return cls(sock), *addr
+
+    @classmethod
+    def connect_to(cls, addr: tuple[str, int]) -> QUICConnection:
+        """Connect to a QUIC server at the given address."""
+
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.connect(addr)
+        sock.settimeout(1)
+
+        for _ in range(RETRY_COUNT):
+            try:
+                sock.send(b"HELLO")
+
+                data = sock.recv(1024)
+                logger.debug(f"Received {data!r}")
+            except TimeoutError:
+                logger.debug("Timeout, retrying...")
+                time.sleep(1)
+            else:
+                break
+        else:
+            logger.error("Failed to establish connection")
+            raise RuntimeError("Failed to establish connection")
+
+        sock.send(b"ACK")
+
+        return cls(sock)
 
     def send(self, stream_id: int, data: bytes) -> None:
         """Send data on the given stream."""
 
-        self.sender.send(stream_id, data)
+        raise NotImplementedError("todo")
 
     def recv(self) -> tuple[int, bytes]:
         """Receive data on any stream."""
 
-        return self.receiver.recv()
+        raise NotImplementedError("todo")
 
     def close(self) -> None:
-        """Close the QUIC connection."""
+        """Close the connection and the socket."""
 
-        self.sender.close()
-        self.receiver.close()
+        self.is_closed = True
+        self.sender.join()
+        self.receiver.join()
 
+    def sender_thread(self) -> None:
+        """Thread that sends data on the socket."""
 
-class QUICMessageWorker:
-    def __init__(self, workhorse: Callable[[Callable[[], bool]], None]) -> None:
-        """Initialize the QUIC message worker."""
+        while not self.is_closed:
+            raise NotImplementedError("todo")
 
-        self.worker = Thread(target=workhorse, args=(self.is_stopped,))
-        self.stop_event = Event()
+    def receiver_thread(self) -> None:
+        """Thread that receives data on the socket."""
 
-    def stop(self) -> None:
-        """Stop the QUIC message worker."""
-
-        self.stop_event.set()
-        self.worker.join()
-
-    def is_stopped(self) -> bool:
-        """Check if the QUIC message worker is stopped."""
-
-        return self.stop_event.is_set()
-
-
-class QUICMessageSender:
-    def __init__(
-        self, sock: socket.socket, address: tuple[str, int], send_window_size: int
-    ) -> None:
-        """Initialize the QUIC message sender."""
-
-        self.sock = sock
-        self.address = address
-        self.send_window_size = send_window_size
-        self.worker = QUICMessageWorker(self.workhorse)
-        self.message_queue: dict[int, list[bytes]] = {}
-
-    def send(self, stream_id: int, data: bytes) -> None:
-        """Send data on the given stream."""
-
-        self.message_queue.setdefault(stream_id, []).append(data)
-
-    def close(self):
-        """Close the QUIC message sender."""
-
-        self.worker.stop()
-
-    def workhorse(self, is_stopped: Callable[[], bool]) -> None:
-        """The sender workhorse"""
-
-        while not is_stopped():
-            raise NotImplementedError()
-
-
-class QUICMessageReceiver:
-    def __init__(
-        self, sock: socket.socket, address: tuple[str, int], receive_window_size: int
-    ) -> None:
-        """Initialize the QUIC message receiver."""
-
-        self.sock = sock
-        self.address = address
-        self.receive_window_size = receive_window_size
-        self.worker = QUICMessageWorker(self.workhorse)
-        self.message_queue: dict[int, list[bytes]] = {}
-
-    def recv(self) -> tuple[int, bytes]:
-        """Receive data on any stream."""
-
-        raise NotImplementedError()
-
-    def close(self):
-        """Close the QUIC message receiver."""
-
-        self.worker.stop()
-
-    def workhorse(self, is_stopped: Callable[[], bool]) -> None:
-        """The receiver workhorse."""
-
-        while not is_stopped():
-            raise NotImplementedError()
+        while not self.is_closed:
+            raise NotImplementedError("todo")

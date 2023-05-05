@@ -14,11 +14,7 @@ class QUICClient:
     def connect(self, socket_addr: tuple[str, int]) -> None:
         """Connect to a QUIC server on the given socket address."""
 
-        self.connection = (
-            QUICConnection.builder()
-            .set_peer_address(socket_addr)
-            .with_client_handshake()
-        )
+        self.connection = QUICConnection.connect_to(socket_addr)
 
         ip, port = socket_addr
         logger.info(f"Connected to {ip}:{port}")
