@@ -1,38 +1,22 @@
 from __future__ import annotations
 
-import logging
-import os
 import socket
 import time
 from threading import Thread
 
+import utils
+from packet import (QuicAckFrame, QuicFrameHeader, QuicInitialPacket,
+                    QuicPacketBuilder, QuicPacketHeader)
+from utils import DataParser
+
 RETRY_COUNT = 3
-
-logging.basicConfig(
-    level=os.environ.get("LOG_LEVEL", "INFO").upper(),
-    format="[%(levelname)s] %(name)s: %(message)s",
-)
+RECEIVE_SIZE = 1500
 
 
-def set_logging_color(level: int, color: int) -> None:
-    def get_color_code(color: int = 0) -> str:
-        return f"\033[{color}m"
-
-    fmt = f"{get_color_code(color)}{logging.getLevelName(level)}{get_color_code()}"
-    logging.addLevelName(level, fmt)
+logger = utils.get_colored_logger("QUIC_IMPL")
 
 
-set_logging_color(logging.DEBUG, 34)  # blue
-set_logging_color(logging.INFO, 32)  # green
-set_logging_color(logging.WARNING, 33)  # yellow
-set_logging_color(logging.ERROR, 31)  # red
-set_logging_color(logging.CRITICAL, 35)  # magenta
-
-
-logger = logging.getLogger("QUIC_IMPL")
-
-
-class QUICConnection:
+class QuicConnection:
     def __init__(self, sock: socket.socket) -> None:
         """Initialize the QUIC connection."""
 
@@ -45,59 +29,117 @@ class QUICConnection:
         self.sender.start()
         self.receiver.start()
 
+        self.send_buffer: dict[int, bytes] = {}
+        self.recv_buffer: dict[int, bytes] = {}
+
     @classmethod
-    def accept_one(cls, sock: socket.socket) -> tuple[QUICConnection, str, int] | None:
+    def accept_one(cls, sock: socket.socket) -> tuple[QuicConnection, str, int] | None:
         """Accept a single QUIC connection on the given socket."""
 
-        data, addr = sock.recvfrom(1024)
-        logger.debug(f"Received {data!r} from {addr}")
+        data, addr = sock.recvfrom(RECEIVE_SIZE)
+        parser = DataParser(data)
 
-        for _ in range(RETRY_COUNT):
-            n = sock.sendto(b"HELLO", addr)
-            logger.debug(f"Sent {n} bytes to {addr}")
-
-            data, addr = sock.recvfrom(1024)
-            logger.debug(f"Received {data!r} from {addr}")
-
-            if data == b"ACK":
-                break
-        else:
-            logger.error("Failed to establish connection")
+        header = parser.parse(QuicPacketHeader)
+        if not header.is_initial():
+            logger.warn("Received invalid packet type")
             return None
 
-        return cls(sock), *addr
+        client_hello = parser.consume(QuicInitialPacket)
+        logger.debug(f"Received {client_hello!r} from {addr}")
+
+        server_hello = (
+            QuicPacketBuilder.initial(packet_id=0)
+            .chain(QuicFrameHeader.ack())
+            .chain(QuicAckFrame(window_size=RECEIVE_SIZE))
+            .build()
+        )
+
+        for _ in range(RETRY_COUNT):
+            n = sock.sendto(server_hello, addr)
+            logger.debug(f"Sent {n} bytes to {addr}")
+
+            data, addr = sock.recvfrom(RECEIVE_SIZE)
+            parser = DataParser(data)
+
+            header = parser.consume(QuicPacketHeader)
+            if not header.is_initial():
+                logger.warn("Received invalid packet type")
+                continue
+
+            frame = parser.consume(QuicFrameHeader)
+            if not frame.is_ack():
+                logger.warn("Received invalid ack")
+                continue
+
+            ack = parser.consume(QuicAckFrame)
+            logger.debug(f"Received {ack!r} from {addr}")
+
+            return cls(sock), *addr
+
+        logger.error("Failed to establish connection")
+        return None
 
     @classmethod
-    def connect_to(cls, addr: tuple[str, int]) -> QUICConnection:
+    def connect_to(cls, addr: tuple[str, int]) -> QuicConnection:
         """Connect to a QUIC server at the given address."""
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.connect(addr)
         sock.settimeout(1)
 
+        client_hello = (
+            QuicPacketBuilder.initial(packet_id=0)
+            .chain(QuicFrameHeader.ack())
+            .chain(QuicAckFrame(window_size=RECEIVE_SIZE))
+            .build()
+        )
+
         for _ in range(RETRY_COUNT):
             try:
-                sock.send(b"HELLO")
+                sock.send(client_hello)
 
-                data = sock.recv(1024)
-                logger.debug(f"Received {data!r}")
+                data = sock.recv(RECEIVE_SIZE)
+                parser = DataParser(data)
+                header = parser.parse(QuicPacketHeader)
+                logger.debug(f"Received {header!r}")
+                if not header.is_initial():
+                    logger.warn("Received invalid packet type, retrying...")
+                    continue
+
+                server_hello = parser.consume(QuicInitialPacket)
+                logger.debug(f"Received {server_hello!r}")
+
+                frame_header = parser.consume(QuicFrameHeader)
+                if not frame_header.is_ack():
+                    logger.warn("Received invalid ack, retrying...")
+                    continue
+
+                server_ack = parser.consume(QuicAckFrame)
+                server_window_size = server_ack.window_size
+                logger.debug(f"{server_window_size=}")
+
+                ack = (
+                    QuicPacketBuilder.initial(packet_id=0)
+                    .chain(QuicFrameHeader.ack())
+                    .chain(QuicAckFrame(window_size=RECEIVE_SIZE))
+                    .build()
+                )
+
+                sock.send(ack)
+
+                return cls(sock)
+
             except TimeoutError:
                 logger.debug("Timeout, retrying...")
                 time.sleep(1)
-            else:
-                break
-        else:
-            logger.error("Failed to establish connection")
-            raise RuntimeError("Failed to establish connection")
 
-        sock.send(b"ACK")
-
-        return cls(sock)
+        logger.error("Failed to establish connection")
+        raise RuntimeError("Failed to establish connection")
 
     def send(self, stream_id: int, data: bytes) -> None:
         """Send data on the given stream."""
 
-        raise NotImplementedError("todo")
+        self.send_buffer[stream_id] = self.send_buffer.get(stream_id, b"") + data
 
     def recv(self) -> tuple[int, bytes]:
         """Receive data on any stream."""

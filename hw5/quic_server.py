@@ -1,9 +1,9 @@
-import logging
 import socket
 
-from quic_impl import QUICConnection
+import utils
+from quic_impl import QuicConnection
 
-logger = logging.getLogger("QUIC_SERVER")
+logger = utils.get_colored_logger("QUIC_SERVER")
 
 
 class QUICServer:
@@ -11,7 +11,7 @@ class QUICServer:
         """Initialize the QUIC server."""
 
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.connection: QUICConnection | None = None
+        self.connection: QuicConnection | None = None
 
     def listen(self, socket_addr: tuple[str, int]) -> None:
         """Listen for incoming QUIC connections on the given socket address."""
@@ -24,7 +24,7 @@ class QUICServer:
     def accept(self) -> None:
         """Accept an incoming QUIC connection."""
 
-        connection = QUICConnection.accept_one(self.socket)
+        connection = QuicConnection.accept_one(self.socket)
 
         if connection is None:
             return
@@ -68,4 +68,5 @@ def main():
 
 
 if __name__ == "__main__":
+    main()
     main()

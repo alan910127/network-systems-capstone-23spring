@@ -1,20 +1,19 @@
-import logging
+import utils
+from quic_impl import QuicConnection
 
-from quic_impl import QUICConnection
-
-logger = logging.getLogger("QUIC_CLIENT")
+logger = utils.get_colored_logger("QUIC_CLIENT")
 
 
 class QUICClient:
     def __init__(self):
         """Initialize the QUIC client."""
 
-        self.connection: QUICConnection | None = None
+        self.connection: QuicConnection | None = None
 
     def connect(self, socket_addr: tuple[str, int]) -> None:
         """Connect to a QUIC server on the given socket address."""
 
-        self.connection = QUICConnection.connect_to(socket_addr)
+        self.connection = QuicConnection.connect_to(socket_addr)
 
         ip, port = socket_addr
         logger.info(f"Connected to {ip}:{port}")
