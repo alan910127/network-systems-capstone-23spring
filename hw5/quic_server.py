@@ -61,9 +61,10 @@ def main():
     server = QUICServer()
     server.listen(("", 30000))
     server.accept()
-    server.send(1, b"SOME DATA, MAY EXCEED 1500 bytes")
-    _, recv_data = server.recv()
-    print(recv_data.decode())  # "Hello Server!"
+    for i in range(5):
+        server.send(i, b"1" * 1_000_000)
+        _, recv_data = server.recv()
+        print(recv_data.decode())  # "Hello Server!"
     server.close()
 
 

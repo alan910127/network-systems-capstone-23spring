@@ -44,9 +44,10 @@ class QUICClient:
 def main():
     client = QUICClient()
     client.connect(("127.0.0.1", 30000))
-    _, recv_data = client.recv()
-    print(recv_data.decode())  # "SOME DATA, MAY EXCEED 1500 bytes"
-    client.send(1, b"Hello Server!")
+    for i in range(5):
+        _, recv_data = client.recv()
+        print(recv_data.decode())  # "SOME DATA, MAY EXCEED 1500 bytes"
+        client.send(i, b"2" * 1_000_000)
     client.close()
 
 
