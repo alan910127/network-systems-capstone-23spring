@@ -241,7 +241,8 @@ class QuicConnection:
             while len(self.sender_window) < self.sender_window_size:
                 # move frames from the send buffer to the sender window
                 has_frames = False
-                for frames in self.send_buffer.values():
+                send_buffer = self.send_buffer.copy()
+                for frames in send_buffer.values():
                     if len(frames) == 0:
                         continue
 

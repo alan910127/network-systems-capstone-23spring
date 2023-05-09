@@ -62,9 +62,10 @@ def main():
     server.listen(("", 30000))
     server.accept()
     for i in range(5):
-        server.send(i, b"1" * 1_000_000)
+        server.send(i, str(i).encode() * 500_000)
         _, recv_data = server.recv()
-        print(recv_data.decode())  # "Hello Server!"
+        logger.info(f"Received {len(recv_data)} bytes")
+        # print(recv_data.decode())  # "Hello Server!"
     server.close()
 
 

@@ -46,8 +46,9 @@ def main():
     client.connect(("127.0.0.1", 30000))
     for i in range(5):
         _, recv_data = client.recv()
-        print(recv_data.decode())  # "SOME DATA, MAY EXCEED 1500 bytes"
-        client.send(i, b"2" * 1_000_000)
+        logger.info(f"Received {len(recv_data)} bytes")
+        # print(recv_data.decode())  # "SOME DATA, MAY EXCEED 1500 bytes"
+        client.send(i, str(i).encode() * 500_000)
     client.close()
 
 
