@@ -16,7 +16,7 @@ from packet import (
 )
 
 RETRY_COUNT = 3
-RECEIVE_SIZE = 1024**2  # 1MB
+RECEIVE_SIZE = 650  # 650 packets, ~1MB
 PACKET_SIZE = 1500  # 1.5KB
 SSTHRESH = 64  # 64 packets
 TIMEOUT = 1.0  # 1 second
@@ -359,6 +359,9 @@ class QuicConnection:
             self.sender_window_size *= 2
         else:
             self.sender_window_size += 1
+
+        if self.sender_window_size > self.max_window_size:
+            self.sender_window_size = self.max_window_size
 
         if self.sender_window_size > SSTHRESH:
             self.exponential_growth = False
