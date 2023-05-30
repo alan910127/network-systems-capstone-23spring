@@ -1,5 +1,6 @@
+from __future__ import annotations
+
 import glob
-import json
 import os
 import xml.etree.ElementTree as ET
 
@@ -12,9 +13,9 @@ if __name__ == "__main__":
     response = client.get(url="http://127.0.0.1:8080/")
     file_list = []
     if response and response.headers["content-type"] == "text/html":
-        root = ET.fromstring(response.get_full_body().decode())
+        root = ET.fromstring(response.get_full_body().decode()) # type: ignore
         links = root.findall(".//a")
-        file_list = []
+        file_list: list[str | None] = []
         for link in links:
             file_list.append(link.text)
 

@@ -1,6 +1,10 @@
 # Homework submission
 *.zip
 
+# Homework 6 assets & outputs
+static
+target
+
 # Created by https://www.toptal.com/developers/gitignore/api/c,c++,linux,visualstudiocode,python
 # Edit at https://www.toptal.com/developers/gitignore?templates=c,c++,linux,visualstudiocode,python
 
