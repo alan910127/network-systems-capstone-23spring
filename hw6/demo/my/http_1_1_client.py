@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import socket
+from urllib.parse import urlparse
+
+from .utils import RequestBuilder, Response, get_colored_logger
+
+log = get_colored_logger("HTTP/1.1 Client")
 
 
 class HTTPClient:
     def __init__(self) -> None:
-        raise NotImplementedError("TODO")
+        """Create a HTTP client."""
+
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
     def get(
         self,
@@ -13,39 +20,28 @@ class HTTPClient:
         headers: dict[str, str] | None = None,
         stream: bool = False,
     ) -> Response:
-        raise NotImplementedError("TODO")
+        components = urlparse(url, scheme="http")
+        log.info(f"GET {components.path} {components.query}")
+        builder = (
+            RequestBuilder()
+            .set_method("GET")
+            .set_resource(components.path, components.query)
+            .set_version("HTTP/1.1")
+        )
 
+        if headers is not None:
+            for key, value in headers.items():
+                builder.set_header(key, value)
 
-class Response:
-    def __init__(self, socket: socket.socket, stream: bool) -> None:
-        self.socket = socket
-        self.stream = stream
+        request = builder.build()
+        try:
+            self.socket.sendall(request)
+        except BrokenPipeError:
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.socket.connect((components.hostname, components.port or 80))
+            self.socket.sendall(request)
 
-        self.version = "HTTP/1.0"
-        self.status = ""
-        self.headers: dict[str, str] = {}
-        self.body = b""
-        self.body_length = 0
-        self.complete = False
-        self.__remain_bytes = b""
+        response = Response(self.socket, stream)
+        response.parse_header()
 
-    def get_full_body(self) -> bytes | None:
-        if self.stream or not self.complete:
-            return None
-
-        return self.body
-
-    def get_stream_content(self) -> bytes | None:
-        if not self.stream or self.complete:
-            return None
-
-        if self.body != b"":
-            content = self.body
-            self.body = b""
-            return content
-
-        content = self.get_remain_body()
-        return content
-
-    def get_remain_body(self) -> bytes:
-        raise NotImplementedError("TODO")
+        return response
