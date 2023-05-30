@@ -3,14 +3,14 @@ from __future__ import annotations
 import socket
 from urllib.parse import urlparse
 
-from utils import STREAM_BLOCK_SIZE, Method, Version, get_colored_logger
+from .utils import STREAM_BLOCK_SIZE, Method, Version, get_colored_logger
 
 log = get_colored_logger("HTTPClient")
 
 
 class HTTPClient:
     def __init__(self) -> None:
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        """Create a HTTP client."""
 
     def get(
         self,
@@ -19,6 +19,7 @@ class HTTPClient:
         stream: bool = False,
     ) -> Response:
         components = urlparse(url, scheme="http")
+        log.info(f"GET {components.path} {components.query}")
         builder = (
             RequestBuilder()
             .set_method("GET")
@@ -32,10 +33,11 @@ class HTTPClient:
 
         request = builder.build()
 
-        self.socket.connect((components.hostname, components.port or 80))
-        self.socket.sendall(request)
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.connect((components.hostname, components.port or 80))
+        sock.sendall(request)
 
-        response = Response(self.socket, stream)
+        response = Response(sock, stream)
         response.parse_header()
 
         return response
@@ -55,7 +57,10 @@ class RequestBuilder:
         return self
 
     def set_resource(self, path: str, query: str) -> RequestBuilder:
-        self.resource = f"{path}?{query}"
+        if query == "":
+            self.resource = path
+        else:
+            self.resource = f"{path}?{query}"
         return self
 
     def set_version(self, version: Version) -> RequestBuilder:
@@ -101,6 +106,7 @@ class Response:
         self.headers: dict[str, str] = {}
         self.body = b""
         self.body_length = 0
+        self.received_length = 0
         self.complete = False
 
     def get_full_body(self) -> bytes | None:
@@ -122,11 +128,16 @@ class Response:
         return content
 
     def get_remain_body(self) -> bytes | None:
-        self.complete = self.complete or len(self.body) >= self.body_length
         if self.complete:
             return None
+        
+        if self.received_length >= self.body_length:
+            self.complete = True
+            return None
 
-        return self.socket.recv(STREAM_BLOCK_SIZE)
+        data = self.socket.recv(STREAM_BLOCK_SIZE)
+        self.received_length += len(data)
+        return data
 
     def parse_header(self) -> None:
         data = self.socket.recv(STREAM_BLOCK_SIZE)
@@ -144,7 +155,8 @@ class Response:
             key, value = header.split(": ", 1)
             self.headers[key.lower()] = value
 
-        log.info(f"headers: {self.headers}")
+        self.body = data.encode()
+        self.received_length = len(data)
 
         if "content-length" in self.headers:
             self.body_length = int(self.headers["content-length"])
@@ -154,7 +166,6 @@ class Response:
             return
 
         if self.stream:
-            self.body = data.encode()
             return
 
         while not self.complete:

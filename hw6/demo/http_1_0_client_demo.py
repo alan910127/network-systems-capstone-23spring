@@ -9,7 +9,7 @@ if __name__ == "__main__":
     client = http_1_0_client.HTTPClient()
 
     target_path = "../../target"
-    response = client.get(url=f"127.0.0.1:8080/")
+    response = client.get(url="http://127.0.0.1:8080/")
     file_list = []
     if response and response.headers["content-type"] == "text/html":
         root = ET.fromstring(response.get_full_body().decode())
@@ -22,7 +22,7 @@ if __name__ == "__main__":
         os.remove(file)
 
     for file in file_list:
-        response = client.get(f"127.0.0.1:8080/static/{file}", stream=True)
+        response = client.get(f"http://127.0.0.1:8080/static/{file}", stream=True)
         file_path = f"{target_path}/{file}"
         if response:
             print(f"{file_path} begin")
