@@ -6,9 +6,9 @@ import time
 from pathlib import Path
 from threading import Thread
 
-from .utils import STREAM_BLOCK_SIZE, Version, get_colored_logger
+from .utils import STREAM_BLOCK_SIZE, Request, ResponseBuilder, get_colored_logger
 
-log = get_colored_logger("HTTPServer")
+log = get_colored_logger("HTTP/1.0 Server")
 
 
 class HTTPServer:
@@ -52,10 +52,18 @@ class HTTPServer:
 
     def handle(self, client: socket.socket) -> None:
         request = Request.from_socket(client)
+        if request is None:
+            log.warning(f"Connection closed by {client.getpeername()}")
+            return
+
         log.info(f"Request: {request.method} {request.resource} {request.version}")
-        path, _query = request.resource.split("?", 1) if "?" in request.resource else (
-            request.resource,
-            "",
+        path, _query = (
+            request.resource.split("?", 1)
+            if "?" in request.resource
+            else (
+                request.resource,
+                "",
+            )
         )
 
         if request.method == "GET" and path in ("", "/"):
@@ -123,88 +131,3 @@ class HTTPServer:
                 bytes_sent += len(chunk)
 
                 client.sendall(chunk)
-
-
-class Request:
-    def __init__(self, method: str, resource: str, version: str) -> None:
-        self.method = method
-        self.resource = resource
-        self.version = version
-
-        self.headers: dict[str, str] = {}
-        self.body: bytes | None = None
-
-    @classmethod
-    def from_socket(cls, client: socket.socket) -> Request:
-        data = client.recv(STREAM_BLOCK_SIZE)
-        if not data:
-            raise ValueError("Empty request")
-
-        data = data.decode()
-        head, data = data.split("\r\n", 1)
-        method, resource, version, *_ = head.split()
-
-        request = cls(method, resource, version)
-
-        if not data or data == "\r\n":
-            return request
-
-        headers, data = data.split("\r\n\r\n", 1)
-        for line in headers.split("\r\n"):
-            key, value = line.split(": ", 1)
-            request.headers[key.lower()] = value
-
-        content_length = int(request.headers.get("content-length", "0"))
-
-        body = data
-        while len(body) < int(content_length):
-            body += client.recv(STREAM_BLOCK_SIZE).decode()
-
-        if request.method == "POST":
-            request.body = data.encode()
-
-        return request
-
-
-STATUS_CODES = {
-    200: "OK",
-    404: "Not Found",
-}
-
-
-class ResponseBuilder:
-    def __init__(self):
-        self.version: Version = "HTTP/1.0"
-        self.status_code = 200
-        self.headers: dict[str, str] = {}
-        self.body: bytes | None = None
-
-    def set_version(self, version: Version) -> ResponseBuilder:
-        self.version = version
-        return self
-
-    def set_status_code(self, status_code: int) -> ResponseBuilder:
-        self.status_code = status_code
-        return self
-
-    def set_header(self, key: str, value: str) -> ResponseBuilder:
-        self.headers[key] = value
-        return self
-
-    def set_body(self, body: bytes) -> ResponseBuilder:
-        self.body = body
-        self.set_header("Content-Length", str(len(body)))
-        return self
-
-    def set_body_chunked(self, body: bytes) -> ResponseBuilder:
-        self.body = body
-        return self
-
-    def build(self) -> bytes:
-        status_line = (
-            f"{self.version} {self.status_code} {STATUS_CODES[self.status_code]}"
-        )
-        header_lines = "".join(
-            f"{key}: {value}\r\n" for key, value in self.headers.items()
-        )
-        return (f"{status_line}\r\n{header_lines}\r\n").encode() + (self.body or b"")
