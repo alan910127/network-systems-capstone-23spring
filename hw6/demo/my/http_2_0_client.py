@@ -1,18 +1,107 @@
 from __future__ import annotations
 
+import socket
 import time
 from collections import deque
+from threading import Thread
+from urllib.parse import urlparse
+
+from .http_2_utils import HttpFrameFlag, HttpFrameHeader, HttpFrameType
+from .utils import STREAM_BLOCK_SIZE, get_colored_logger
+
+log = get_colored_logger("HTTP/2.0 Client")
+
+OK = "OK"
+NOT_YET = "Not yet"
 
 
 class HTTPClient:
     def __init__(self) -> None:
-        raise NotImplementedError("TODO")
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.stream_id = 1
+        self.responses: dict[int, Response] = {}
+        self.is_receiving = False
+        self.worker = Thread(target=self.receive_worker)
 
     def get(self, url: str, headers: dict[str, str] | None = None) -> Response:
-        raise NotImplementedError("TODO")
+        components = urlparse(url, scheme="http")
+        log.info(f"GET {components.path} {components.query}")
 
+        request_headers: list[tuple[str, str]] = [
+            (":method", "GET"),
+            (":path", components.path),
+            (":scheme", "http"),
+            (":authority", components.netloc or "localhost"),
+        ]
 
-NOT_YET = "Not yet"
+        if headers is not None:
+            for key, value in headers.items():
+                request_headers.append((key, value))
+
+        byte_headers = "\r\n".join(
+            f"{key}: {value}" for key, value in request_headers
+        ).encode()
+
+        frame_header = HttpFrameHeader(
+            payload_length=len(byte_headers),
+            type=HttpFrameType.Headers,
+            flag=HttpFrameFlag.EndStream,
+            stream_id=self.stream_id,
+        )
+        self.stream_id += 2
+
+        try:
+            self.socket.sendall(frame_header.to_bytes() + byte_headers)
+        except BrokenPipeError:
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.socket.connect((components.hostname, components.port or 80))
+            self.socket.sendall(frame_header.to_bytes() + byte_headers)
+
+        if not self.is_receiving:
+            self.is_receiving = True
+            self.worker.start()
+
+        response = Response(self.stream_id - 2)
+        self.responses[response.stream_id] = response
+
+        return response
+
+    def receive_worker(self):
+        self.socket.settimeout(5)
+        while self.is_receiving:
+            try:
+                data = self.socket.recv(HttpFrameHeader.size())
+                if len(data) < HttpFrameHeader.size():
+                    continue
+                header = HttpFrameHeader.from_bytes(data)
+            except socket.timeout:
+                self.is_receiving = False
+                break
+
+            payload = bytearray()
+            while len(payload) < header.payload_length:
+                receive_size = min(
+                    STREAM_BLOCK_SIZE, header.payload_length - len(payload)
+                )
+                payload += self.socket.recv(receive_size)
+
+            if header.flags == HttpFrameFlag.EndStream:
+                self.responses[header.stream_id].complete = True
+
+            if header.type == HttpFrameType.Headers:
+                payload = bytes(payload).decode()
+
+                for header_line in payload.split("\r\n"):
+                    if not header_line:
+                        continue
+                    log.info(f"Header: {header_line}")
+                    key, value = header_line.split(": ")
+                    self.responses[header.stream_id].headers[key] = value
+
+                self.responses[header.stream_id].status = "OK"
+                continue
+
+            self.responses[header.stream_id].contents.append(payload)
 
 
 class Response:
