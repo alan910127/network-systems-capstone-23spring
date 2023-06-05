@@ -1,15 +1,15 @@
 [tool]
 [tool.pdm]
+[tool.pdm.scripts]
+controller = "ryu-manager 109652039_controller --verbose"
+n1 = "sudo mn --custom src/109652039_topo.py --topo n1topo --controller=remote,ip=127.0.0.1"
+n2 = "sudo mn --custom src/109652039_topo.py --topo n2topo --controller=remote,ip=10.0.3.5"
 
 [project]
 name = "nscap-sdn"
 version = "0.1.0"
 description = ""
 authors = [{ name = "alan910127", email = "alan469357@gmail.com" }]
-dependencies = [
-    "eventlet==0.30.2",
-    "wheel>=0.40.0",
-    "ryu>=4.34",
-]
+dependencies = ["eventlet==0.30.2", "wheel>=0.40.0", "ryu>=4.34"]
 requires-python = ">=3.8"
 license = { text = "MIT" }
