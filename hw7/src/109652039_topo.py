@@ -3,7 +3,13 @@ from mininet.topo import Topo
 
 class NetworkOneTopology(Topo):
     def build(self):
-        hosts = [self.addHost("h{}".format(i)) for i in range(1, 5)]
+        hosts = [
+            self.addHost(
+                "h{}".format(i),
+                ip="10.0.0.{}".format(i),
+            )
+            for i in range(1, 5)
+        ]
         switch = self.addSwitch("s1")
 
         for host in hosts:
@@ -12,7 +18,13 @@ class NetworkOneTopology(Topo):
 
 class NetworkTwoTopology(Topo):
     def build(self):
-        hosts = [self.addHost("h{}".format(i)) for i in range(5, 9)]
+        hosts = [
+            self.addHost(
+                "h{}".format(i),
+                ip="10.0.0.{}".format(i),
+            )
+            for i in range(5, 9)
+        ]
         switch = self.addSwitch("s2")
 
         for host in hosts:
