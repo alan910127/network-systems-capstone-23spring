@@ -4,6 +4,8 @@
 controller = "ryu-manager 109652039_controller --verbose"
 n1 = "sudo mn --custom src/109652039_topo.py --topo n1topo --controller=remote,ip=127.0.0.1"
 n2 = "sudo mn --custom src/109652039_topo.py --topo n2topo --controller=remote,ip=10.0.3.5"
+vm1-gre = "sudo ovs-vsctl add-port s1 my-gre -- set interface my-gre type=gre options:remote_ip=10.0.3.9"
+vm2-gre = "sudo ovs-vsctl add-port s2 my-gre -- set interface my-gre type=gre options:remote_ip=10.0.3.5"
 
 [project]
 name = "nscap-sdn"
