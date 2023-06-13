@@ -5,6 +5,7 @@ from ryu.lib.packet import ethernet, packet
 from ryu.ofproto import ether, inet, ofproto_v1_3
 
 DROPPED_PORTS = (3, 4)
+ALLOWED_PORTS = (1, 2)
 
 
 class Tables:
@@ -40,7 +41,9 @@ class CustomController(app_manager.RyuApp):
 
         self.add_default_table_flow(datapath, ofproto, parser)
         self.add_filter_icmp_table_flow(datapath, ofproto, parser)
-        self.add_filter_port_table_flow(datapath, ofproto, parser)
+        self.add_filter_port_table_flow_blocklist(datapath, ofproto, parser)
+        # self.add_filter_port_table_flow_allowlist(datapath, ofproto, parser)
+        # self.add_fake_filter_port_table_flow(datapath, ofproto, parser)
         self.add_forward_table_flow(datapath, ofproto, parser)
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
@@ -97,8 +100,8 @@ class CustomController(app_manager.RyuApp):
             datapath,
             Priority.HIGH,
             match,
-            src_table=Tables.DEFAULT,
-            dst_table=Tables.FILTER_ICMP,
+            from_table=Tables.DEFAULT,
+            to_table=Tables.FILTER_ICMP,
         )
 
     def add_filter_icmp_table_flow(self, datapath, ofproto, parser):
@@ -110,8 +113,8 @@ class CustomController(app_manager.RyuApp):
             datapath,
             Priority.HIGH,
             match,
-            src_table=Tables.FILTER_ICMP,
-            dst_table=Tables.FILTER_PORT,
+            from_table=Tables.FILTER_ICMP,
+            to_table=Tables.FILTER_PORT,
         )
 
         match = parser.OFPMatch()
@@ -119,11 +122,11 @@ class CustomController(app_manager.RyuApp):
             datapath,
             Priority.MEDIUM,
             match,
-            src_table=Tables.FILTER_ICMP,
-            dst_table=Tables.FORWARD,
+            from_table=Tables.FILTER_ICMP,
+            to_table=Tables.FORWARD,
         )
 
-    def add_filter_port_table_flow(self, datapath, ofproto, parser):
+    def add_filter_port_table_flow_blocklist(self, datapath, ofproto, parser):
         for port in DROPPED_PORTS:
             match = parser.OFPMatch(in_port=port)
             self.add_drop_packet_flow(
@@ -138,8 +141,37 @@ class CustomController(app_manager.RyuApp):
             datapath,
             Priority.MEDIUM,
             match,
-            src_table=Tables.FILTER_PORT,
-            dst_table=Tables.FORWARD,
+            from_table=Tables.FILTER_PORT,
+            to_table=Tables.FORWARD,
+        )
+
+    def add_filter_port_table_flow_allowlist(self, datapath, ofproto, parser):
+        for port in ALLOWED_PORTS:
+            match = parser.OFPMatch(in_port=port)
+            self.add_change_table_flow(
+                datapath,
+                Priority.HIGH,
+                match,
+                from_table=Tables.FILTER_PORT,
+                to_table=Tables.FORWARD,
+            )
+
+        match = parser.OFPMatch()
+        self.add_drop_packet_flow(
+            datapath,
+            Priority.MEDIUM,
+            match,
+            table=Tables.FILTER_PORT,
+        )
+
+    def add_fake_filter_port_table_flow(self, datapath, ofproto, parser):
+        match = parser.OFPMatch()
+        self.add_change_table_flow(
+            datapath,
+            Priority.MEDIUM,
+            match,
+            from_table=Tables.FILTER_PORT,
+            to_table=Tables.FORWARD,
         )
 
     def add_forward_table_flow(self, datapath, ofproto, parser):
@@ -165,17 +197,17 @@ class CustomController(app_manager.RyuApp):
         datapath.send_msg(mod)
 
     def add_change_table_flow(
-        self, datapath, priority, match, src_table: int, dst_table: int
+        self, datapath, priority, match, from_table: int, to_table: int
     ):
         parser = datapath.ofproto_parser
 
-        inst = [parser.OFPInstructionGotoTable(table_id=dst_table)]
+        inst = [parser.OFPInstructionGotoTable(table_id=to_table)]
         mod = parser.OFPFlowMod(
             datapath=datapath,
             priority=priority,
             match=match,
             instructions=inst,
-            table_id=src_table,
+            table_id=from_table,
         )
         datapath.send_msg(mod)
 
